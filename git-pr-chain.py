@@ -11,9 +11,6 @@ import collections
 VERBOSE = True
 
 
-Notes = collections.namedtuple("Notes", ["pr"])
-
-
 def fatal(msg):
     print(msg, file=sys.stderr)
     sys.exit(1)
@@ -76,8 +73,8 @@ def cmd_show():
 
     # TODO: Check for nonlinear history.
 
-    # Get notes for each of these commits.
-    notes = {c: git("notes", "show", c, err_ok=True) for c in commits}
+    # Get the commit message for each commit, keeping only the lines that start
+    # with "GPC:".
     parsed_notes = {}
     for commit, notes in notes.items():
         lines = (
