@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import inspect
 import json
 import os
@@ -7,13 +8,31 @@ import subprocess
 import sys
 import re
 import collections
+import json
 
-VERBOSE = True
+from github import Github  # pip install PyGithub
+from xdg import XDG_CONFIG_HOME  # pip install xdg
+
+VERBOSE = False
+
+
+def gh_access_code():
+    # TODO: Make this user-friendly and interactive.
+    with open(os.path.join(XDG_CONFIG_HOME, 'git-pr-chain.json'), "r") as f:
+        return json.load(f)["access_code"]
+
+
+def gh_session():
+    return Github(gh_access_code())
 
 
 def fatal(msg):
     print(msg, file=sys.stderr)
     sys.exit(1)
+
+
+def warn(msg):
+    print(f"WARNING: {msg}", file=sys.stderr)
 
 
 def traced(fn, show_start=False, show_end=True):
@@ -47,18 +66,55 @@ def git(*args, err_ok=False):
 
 @traced
 def git_tracks(branch=None):
-    """Gets the upstream branch tracked by `branch`.  If `branch` is none, uses the current branch."""
+    """Gets the upstream branch tracked by `branch`.
+
+    If `branch` is none, uses the current branch.
+    """
     if not branch:
         branch = "HEAD"
     branchref = git("rev-parse", "--symbolic-full-name", branch)
     return git("for-each-ref", "--format=%(upstream:short)", branchref)
 
 
-def cmd_rebase():
-    pass
+def parse_md(commit: str):
+    msg = git("show", "-s", "--format=%B", commit)
+    lines = [
+        re.sub(r"^GPC:\s*", "", l).strip()
+        for l in msg.split("\n")
+        if l.startswith("GPC:")
+    ]
+
+    md = {}
+    for l in lines:
+        if not l:
+            # I guess we can ignore empty "GPC:" lines.
+            continue
+
+        # Format is "key value, which can have spaces or whatever"
+        match = re.match(r"^(\w+)\s+(.*)$", l)
+        if not match:
+            warn(f"Error parsing line in {commit}: {l}")
+            continue
+
+        k, v = match.group(1, 2)
+        # Right now, we only know how to parse "GPC:PR blah blah"
+        if k != "PR":
+            warn(f"Unexpected key {k} in {commit}: {l}")
+            continue
+
+        if k == "PR":
+            # TODO Check that it's a URL of the right form.
+            pass
+
+        if k in md:
+            warn(f"Duplicate key {k} in {commit}")
+
+        md[k] = v
+
+    return md
 
 
-def cmd_show():
+def cmd_show(args):
     # Get the commits in this branch.
     upstream_branch = git_tracks()
     if not upstream_branch:
@@ -69,45 +125,63 @@ def cmd_show():
     # Filter out empty commits (if e.g. the git log produces nothing).
     commits = [c for c in commits if c]
     if not commits:
-        fatal("No commits in branch.  Is the upstream branch set correctly?")
+        fatal(
+            "No commits in branch.  Is the upstream branch (git branch "
+            "--set-upstream-to <origin/master or something>set correctly?"
+        )
 
     # TODO: Check for nonlinear history.
 
     # Get the commit message for each commit, keeping only the lines that start
     # with "GPC:".
-    parsed_notes = {}
-    for commit, notes in notes.items():
-        lines = (
-            re.sub("^git-pr-chain:", "", l)
-            for l in notes.split("\n")
-            if l.startswith("git-pr-chain:")
-        )
-        try:
-            *_, last_line = lines
-        except ValueError:
-            continue
-        parsed_notes[commit] = Notes(**json.loads(last_line))
+    mds = {}
+    for commit in commits:
+        mds[commit] = parse_md(commit)
 
     # TODO: Make this prettier.
-    for c in commits:
-        print(parsed_notes[c].pr, git("log", "--pretty=oneline", "-n1", c))
+    for commit in commits:
+        print(git("log", "--oneline", "-n1", commit) + " " + str(mds[commit]))
 
 
-def cmd_upload():
-    pass
-
-
-def all_commands():
-    # TODO: Switch to using inspect for this.
-    return {
-        "rebase": cmd_rebase,
-        "show": cmd_show,
-        "upload": cmd_upload,
-    }
+def cmd_upload(args):
+    g = gh_session()
 
 
 def main():
-    all_commands()[sys.argv[1]]()
+    parser = argparse.ArgumentParser()
+    subparser = parser.add_subparsers()
+
+    sp_show = subparser.add_parser('show', help='List commits in chain')
+    sp_show.set_defaults(func=cmd_show)
+
+    sp_upload = subparser.add_parser('upload', help='Create and update PRs in github')
+    sp_upload.add_argument('-n', '--dry-run', action='store_true')
+    sp_upload.set_defaults(func=cmd_upload)
+
+    def cmd_help(args):
+        if 'command' not in args or not args.command:
+            parser.print_help()
+        elif args.command == 'show':
+            sp_show.print_help()
+        elif args.command == 'upload':
+            sp_upload.print_help()
+        elif args.command == 'help':
+            print("Well aren't you trying to be clever.", file=sys.stderr)
+        else:
+            print(f'Unrecognized subcommand {args.command}', file=sys.stderr)
+            parser.print_help()
+            sys.exit(1)
+
+    sp_help = subparser.add_parser('help')
+    sp_help.add_argument('command', nargs='?', help='Subcommand to get help on')
+    sp_help.set_defaults(func=cmd_help)
+
+    args = parser.parse_args()
+    if 'func' not in args:
+      parser.print_help()
+      sys.exit(1)
+
+    args.func(args)
 
 
 if __name__ == "__main__":
