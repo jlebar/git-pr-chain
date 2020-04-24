@@ -6,6 +6,7 @@
 
 import argparse
 import collections
+import concurrent.futures
 import datetime
 import functools
 import inspect
@@ -126,9 +127,10 @@ class cached_property:
 
 
 @traced
-def git(*args, err_ok=False):
+def git(*args, err_ok=False, stderr_to_stdout=False):
     """Runs a git command, returning the output."""
     stderr = subprocess.DEVNULL if err_ok else None
+    stderr = subprocess.STDOUT if stderr_to_stdout else stderr
     try:
         return (
             subprocess.check_output(["git"] + list(args), stderr=stderr)
@@ -141,25 +143,11 @@ def git(*args, err_ok=False):
         return ""
 
 
-@traced
-def git_side_effect(*args) -> None:
-    """Runs a git command, unless we're in dry-run mode.
-
-    Doesn't return anything so you're not tempted to rely on a return value
-    that might not be there in a dry run.  (Might have to relax that
-    constraint...)
-    """
-    if DRY_RUN:
-        print("DRY RUN: " + subprocess.list2cmdline(["git"] + list(args)))
-        return
-    print(git(*args))
-
-
 class Commit:
     # TODO: We could compute some/all of these properties with a single call to
     # git, rather than one for each.  Indeed, we could do it with a single call
     # to git for *all* of the commits we're interested in, all at once.  Does
-    # it matter?
+    # it matter?  Maybe not, network ops are so much slower.
 
     def __init__(self, sha: str, parent: Optional["Commit"]):
         self.sha = sha
@@ -381,18 +369,35 @@ def cmd_show(args):
             subprocess.run(("git", "--no-pager", "log", "-n1", "--oneline", c.sha))
 
 
-def cmd_upload(args):
+def push_branches(args):
     commits = branch_commits()
     grouped_commits = [
         (gh_branch_prefix() + branch, list(cs))
         for branch, cs in itertools.groupby(commits, lambda c: c.gh_branch)
     ]
-
-    # TODO: This could be done in parallel, and may be on the hot path.
     remote = git_upstream_remote()
-    for branch, cs in grouped_commits:
-        print(f"Pushing {branch} to {remote}")
-        git_side_effect("push", "-f", remote, f"{cs[-1].sha}:refs/heads/{branch}")
+
+    def push(branch_and_commits):
+        branch, cs = branch_and_commits
+        if not DRY_RUN:
+            print(
+                f"Pushing {branch} to {remote}:\n"
+                + git("push", "-f", remote, f"{cs[-1].sha}:refs/heads/{branch}", stderr_to_stdout=True)
+                + '\n'
+            )
+        else:
+            print(f"DRY RUN: Pushing {branch} to {remote}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+        executor.map(push, grouped_commits)
+
+
+def create_and_update_prs(args):
+    commits = branch_commits()
+    grouped_commits = [
+        (gh_branch_prefix() + branch, list(cs))
+        for branch, cs in itertools.groupby(commits, lambda c: c.gh_branch)
+    ]
 
     # Create or update PRs for each branch.
     repo = gh_repo_client()
@@ -439,6 +444,11 @@ def cmd_upload(args):
                     Don't know which to choose!"""
                 )
             )
+
+
+def cmd_upload(args):
+    push_branches(args)
+    create_and_update_prs(args)
 
 
 def main():
