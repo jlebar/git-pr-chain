@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+# Requires
+#  pip3 install pyyaml
+#  pip3 install PyGithub
+
 import argparse
 import collections
 import datetime
@@ -13,9 +17,15 @@ import re
 import subprocess
 import sys
 import textwrap
+import yaml
 from typing import List, Dict, Tuple, Iterable, Optional
 
+# Not compatible with pytype; ignore using instructions from
+# https://github.com/google/pytype/issues/80
+from github import Github  # type: ignore
+
 VERBOSE = False
+DRY_RUN = False
 
 
 def fatal(msg):
@@ -51,6 +61,53 @@ def traced(fn, show_start=False, show_end=True):
     return inner
 
 
+@functools.lru_cache()
+def gh_client():
+    # Try to get the github oauth token out of gh or hub's config file.  Yes, I
+    # am that evil.
+    config_dir = os.environ.get(
+        "XDG_CONFIG_HOME", os.path.join(os.environ["HOME"], ".config")
+    )
+
+    def get_token_from(fname):
+        try:
+            with open(os.path.join(config_dir, fname)) as f:
+                config = yaml.safe_load(f)
+                return config["github.com"][0]["oauth_token"]
+        except (FileNotFoundError, KeyError, IndexError):
+            return None
+
+    token = None
+    for fname in ["gh/config.yml", "hub"]:
+        token = get_token_from(fname)
+        if token:
+            break
+    if not token:
+        fatal(
+            "Couldn't get oauth token from gh or hub.  Install one of those "
+            "tools and authenticate to github."
+        )
+    return Github(token)
+
+
+@functools.lru_cache()
+@traced
+def gh_repo_client():
+    remote = git_upstream_remote()
+
+    # Translate our remote's URL into a github user/repo string.  (Is there
+    # seriously not a beter way to do this?)
+    remote_url = git("remote", "get-url", remote)
+    match = re.search(r"(?:[/:])([^/:]+/[^/:]+)\.git$", remote_url)
+    if not match:
+        fatal(
+            f"Couldn't extract github user/repo from {remote} "
+            f"remote URL {remote_url}."
+        )
+    gh_repo_name = match.group(1)
+    return gh_client().get_repo(gh_repo_name)
+
+
 class cached_property:
     """
     (Bad) backport of python3.8's functools.cached_property.
@@ -84,6 +141,20 @@ def git(*args, err_ok=False):
         return ""
 
 
+@traced
+def git_side_effect(*args) -> None:
+    """Runs a git command, unless we're in dry-run mode.
+
+    Doesn't return anything so you're not tempted to rely on a return value
+    that might not be there in a dry run.  (Might have to relax that
+    constraint...)
+    """
+    if DRY_RUN:
+        print("DRY RUN: " + subprocess.list2cmdline(["git"] + list(args)))
+        return
+    print(git(*args))
+
+
 class Commit:
     # TODO: We could compute some/all of these properties with a single call to
     # git, rather than one for each.  Indeed, we could do it with a single call
@@ -108,7 +179,9 @@ class Commit:
         if not matches:
             return self.parent.gh_branch if self.parent else None
         if len(matches) == 1:
-            return matches[0].group(1)
+            # findall returns the groups directly, so matches[0] is group 1 of
+            # the match -- which is what we want.
+            return matches[0]
         fatal(
             f"Commit {self.sha} has multiple git-pr-chain lines.  Rewrite "
             "history and fix this."
@@ -141,8 +214,9 @@ class Commit:
         return git("show", "--no-patch", "--format=%B", self.sha)
 
 
+@functools.lru_cache()
 @traced
-def git_tracks(branch=None):
+def git_upstream_branch(branch=None):
     """Gets the upstream branch tracked by `branch`.
 
     If `branch` is none, uses the current branch.
@@ -151,6 +225,18 @@ def git_tracks(branch=None):
         branch = "HEAD"
     branchref = git("rev-parse", "--symbolic-full-name", branch)
     return git("for-each-ref", "--format=%(upstream:short)", branchref)
+
+
+def git_upstream_remote(branch=None):
+    # Get the name of the upstream remote (e.g. "origin") that this branch is
+    # downstream from.
+    return git_upstream_branch(branch).split("/")[0]
+
+
+@functools.lru_cache()
+@traced
+def gh_branch_prefix():
+    return git("config", "pr-chain.branch-prefix").strip()
 
 
 def validate_branch_commits(commits: Iterable[Commit]) -> None:
@@ -170,8 +256,7 @@ def validate_branch_commits(commits: Iterable[Commit]) -> None:
                 {list_commits(merge_commits)}
 
                 Merges are incompatible with git-pr-chain.  Rewrite your branch
-                to a linear history.
-                """
+                to a linear history."""
             )
         )
 
@@ -198,8 +283,7 @@ def validate_branch_commits(commits: Iterable[Commit]) -> None:
                 {list_strs(repeated_branches)}
 
                 This is not allowed; reorder commits or change their upstream
-                branches.
-                """
+                branches."""
             )
         )
 
@@ -219,8 +303,7 @@ def validate_branch_commits(commits: Iterable[Commit]) -> None:
 
               {list_commits(commits_without_branch)}
 
-              This shouldn't happen and is probably a bug in git-pr-chain.
-              """
+              This shouldn't happen and is probably a bug in git-pr-chain."""
             )
         )
 
@@ -232,7 +315,7 @@ def branch_commits() -> List[Commit]:
     The first commit is the one connected to the branch base.  The last commit
     is HEAD.
     """
-    upstream_branch = git_tracks()
+    upstream_branch = git_upstream_branch()
     if not upstream_branch:
         fatal(
             "Set an upstream branch with e.g. `git branch "
@@ -240,7 +323,9 @@ def branch_commits() -> List[Commit]:
         )
     commits = []
     for sha in (
-        git("log", "--pretty=%H", f"{upstream_branch}..HEAD").strip().split("\n")
+        git("log", "--reverse", "--pretty=%H", f"{upstream_branch}..HEAD")
+        .strip()
+        .split("\n")
     ):
         # Filter out empty commits (if e.g. the git log produces nothing).
         if not sha:
@@ -269,7 +354,7 @@ def cmd_show(args):
         )
 
     print(
-        f"Current branch is downstream from {git_tracks()}, "
+        f"Current branch is downstream from {git_upstream_branch()}, "
         f"{len(commits)} commit(s) ahead.\n"
     )
     for branch, cs in itertools.groupby(commits, lambda c: c.gh_branch):
@@ -297,19 +382,75 @@ def cmd_show(args):
 
 
 def cmd_upload(args):
-    pass
+    commits = branch_commits()
+    grouped_commits = [
+        (gh_branch_prefix() + branch, list(cs))
+        for branch, cs in itertools.groupby(commits, lambda c: c.gh_branch)
+    ]
+
+    # TODO: This could be done in parallel, and may be on the hot path.
+    remote = git_upstream_remote()
+    for branch, cs in grouped_commits:
+        print(f"Pushing {branch} to {remote}")
+        git_side_effect("push", "-f", remote, f"{cs[-1].sha}:refs/heads/{branch}")
+
+    # Create or update PRs for each branch.
+    repo = gh_repo_client()
+    for idx, (branch, cs) in enumerate(grouped_commits):
+        if idx > 0:
+            base, _ = grouped_commits[idx - 1]
+        else:
+            base = git_upstream_branch().split("/")[-1]
+
+        # For some reason, the `head=branch` filter doesn't seem to work!
+        # Perhaps we should just pull all PRs once, at the beginning?
+        prs = [
+            pr
+            for pr in repo.get_pulls(state="open", head=branch)
+            if pr.head.ref == branch
+        ]
+        if not prs:
+            if VERBOSE or DRY_RUN:
+                print(f"Creating PR for {branch}, base {base}...")
+            # TODO: Put the PR stack in the body.
+            # TODO: Open an editor for title and body?  (Do both at once.)
+            # TODO: Verify that everything is OK before pushing anything?
+            if not DRY_RUN:
+                pr = repo.create_pull(title=branch, body="", base=base, head=branch)
+                # TODO: Auto-open this URL.
+                print(f"Created {pr.html_url}")
+        elif len(prs) == 1:
+            pr = prs[0]
+            if pr.base.ref != base:
+                if VERBOSE or DRY_RUN:
+                    print(
+                        f"Updating base branch for {branch} (PR #{pr.number}) "
+                        f"from {pr.base.ref} to {base}"
+                    )
+                if not DRY_RUN:
+                    pr.edit(base=base)
+        else:
+            joined_pr_urls = "\n".join(pr.url for pr in prs)
+            fatal(
+                textwrap.dedent(
+                    f"""\
+                    Branch {branch} has multiple open PRs:
+                    {joined_pr_urls}
+                    Don't know which to choose!"""
+                )
+            )
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("-n", "--dry-run", action="store_true")
     subparser = parser.add_subparsers()
 
     sp_show = subparser.add_parser("show", help="List commits in chain")
     sp_show.set_defaults(func=cmd_show)
 
     sp_upload = subparser.add_parser("upload", help="Create and update PRs in github")
-    sp_upload.add_argument("-n", "--dry-run", action="store_true")
     sp_upload.set_defaults(func=cmd_upload)
 
     def cmd_help(args):
@@ -338,6 +479,10 @@ def main():
 
     global VERBOSE
     VERBOSE = args.verbose
+
+    global DRY_RUN
+    DRY_RUN = args.dry_run
+
     args.func(args)
 
 
