@@ -23,7 +23,7 @@ from typing import List, Dict, Tuple, Iterable, Optional
 
 # Not compatible with pytype; ignore using instructions from
 # https://github.com/google/pytype/issues/80
-from github import Github  # type: ignore
+import github  # type: ignore
 
 VERBOSE = False
 DRY_RUN = False
@@ -88,7 +88,7 @@ def gh_client():
             "Couldn't get oauth token from gh or hub.  Install one of those "
             "tools and authenticate to github."
         )
-    return Github(token)
+    return github.Github(token)
 
 
 @functools.lru_cache()
@@ -227,6 +227,19 @@ def gh_branch_prefix():
     return git("config", "pr-chain.branch-prefix").strip()
 
 
+@functools.lru_cache()
+def grouped_commits() -> List[Tuple[Optional[str], List[Commit]]]:
+    return [
+        (gh_branch_prefix() + branch if branch else None, list(cs))
+        for branch, cs in itertools.groupby(branch_commits(), lambda c: c.gh_branch)
+    ]
+
+
+@functools.lru_cache()
+def grouped_commits_to_push() -> List[Tuple[str, List[Commit]]]:
+    return [(branch, cs) for branch, cs in grouped_commits() if branch]
+
+
 def validate_branch_commits(commits: Iterable[Commit]) -> None:
     def list_strs(strs):
         return "\n".join("  - " + s for s in strs)
@@ -248,8 +261,6 @@ def validate_branch_commits(commits: Iterable[Commit]) -> None:
             )
         )
 
-    grouped_commits = itertools.groupby(commits, lambda c: c.gh_branch)
-
     # Count the number of times each github branch appears in grouped_commits.
     # If a branch appears more than once, that means we have an "AABA"
     # situation, where we go to one branch, then to another, then back to the
@@ -258,7 +269,11 @@ def validate_branch_commits(commits: Iterable[Commit]) -> None:
     # Ignore the `None` branch here.  It's allowed to appear at the beginning
     # and end of the list (but nowhere else!), and that invariant is checked
     # below.
-    ctr = collections.Counter(branch for branch, _ in grouped_commits if branch)
+    grouped_commits = [
+        (branch, list(cs))
+        for branch, cs in itertools.groupby(commits, lambda c: c.gh_branch)
+    ]
+    ctr = collections.Counter(branch for branch, _ in grouped_commits)
     repeated_branches = [branch for branch, count in ctr.items() if count > 1]
     if repeated_branches:
         fatal(
@@ -370,80 +385,150 @@ def cmd_show(args):
 
 
 def push_branches(args):
-    commits = branch_commits()
-    grouped_commits = [
-        (gh_branch_prefix() + branch, list(cs))
-        for branch, cs in itertools.groupby(commits, lambda c: c.gh_branch)
-    ]
-    remote = git_upstream_remote()
-
-    def push(branch_and_commits):
+    def push(branch_and_commits: Tuple[str, List[Commit]]):
         branch, cs = branch_and_commits
+        remote = git_upstream_remote()
+        msg = f"Pushing {branch} to {remote}"
         if not DRY_RUN:
-            print(
-                f"Pushing {branch} to {remote}:\n"
-                + git("push", "-f", remote, f"{cs[-1].sha}:refs/heads/{branch}", stderr_to_stdout=True)
-                + '\n'
+            msg += ":\n"
+            msg += git(
+                "push",
+                "-f",
+                remote,
+                f"{cs[-1].sha}:refs/heads/{branch}",
+                stderr_to_stdout=True,
             )
-        else:
-            print(f"DRY RUN: Pushing {branch} to {remote}")
+            msg += "\n"
+
+        # Print the message with just one print statement so that there's no
+        # interleaving of the multiple concurrent pushes.
+        print(msg)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
-        executor.map(push, grouped_commits)
+        executor.map(push, grouped_commits())
+
+
+def chain_desc_for(
+    gh_branch: str,
+    cs: List[Commit],
+    open_prs: Dict[str, List[github.PullRequest.PullRequest]],
+) -> str:
+    chain = []
+    for branch, _ in grouped_commits_to_push():
+        pr = open_prs[branch][0]  # should only be one at this point.
+        line = f"#{pr.number} {pr.title}"
+        if pr.head.ref == gh_branch:
+            line = f"👉 {line} 👈 **YOU ARE HERE**"
+        chain.append(f"1. {line}")
+    chain_str = "\n".join(chain)
+
+    commits_str = "\n".join(
+        "1. "
+        + (
+            re.sub(r"^\s*(git-pr-chain|GPC):.*", "", c.commit_msg, flags=re.MULTILINE)
+            .replace("\n", "\n    ")
+            .strip()
+        )
+        for c in cs
+    )
+
+    return f"""\
+<git-pr-chain>
+
+#### Commits in this PR
+{commits_str}
+
+#### [PR chain](https://github.com/jlebar/git-pr-chain)
+{chain_str}
+
+</git-pr-chain>
+"""
 
 
 def create_and_update_prs(args):
     commits = branch_commits()
-    grouped_commits = [
-        (gh_branch_prefix() + branch, list(cs))
-        for branch, cs in itertools.groupby(commits, lambda c: c.gh_branch)
-    ]
-
-    # Create or update PRs for each branch.
     repo = gh_repo_client()
-    for idx, (branch, cs) in enumerate(grouped_commits):
-        if idx > 0:
-            base, _ = grouped_commits[idx - 1]
-        else:
-            base = git_upstream_branch().split("/")[-1]
 
-        # For some reason, the `head=branch` filter doesn't seem to work!
-        # Perhaps we should just pull all PRs once, at the beginning?
-        prs = [
-            pr
-            for pr in repo.get_pulls(state="open", head=branch)
-            if pr.head.ref == branch
-        ]
-        if not prs:
-            if VERBOSE or DRY_RUN:
-                print(f"Creating PR for {branch}, base {base}...")
-            # TODO: Put the PR stack in the body.
-            # TODO: Open an editor for title and body?  (Do both at once.)
-            # TODO: Verify that everything is OK before pushing anything?
-            if not DRY_RUN:
-                pr = repo.create_pull(title=branch, body="", base=base, head=branch)
-                # TODO: Auto-open this URL.
-                print(f"Created {pr.html_url}")
-        elif len(prs) == 1:
-            pr = prs[0]
-            if pr.base.ref != base:
-                if VERBOSE or DRY_RUN:
-                    print(
-                        f"Updating base branch for {branch} (PR #{pr.number}) "
-                        f"from {pr.base.ref} to {base}"
-                    )
-                if not DRY_RUN:
-                    pr.edit(base=base)
-        else:
-            joined_pr_urls = "\n".join(pr.url for pr in prs)
-            fatal(
-                textwrap.dedent(
-                    f"""\
-                    Branch {branch} has multiple open PRs:
-                    {joined_pr_urls}
-                    Don't know which to choose!"""
-                )
+    # Nominally you can ask the GH API for all PRs whose head is a particular
+    # branch.  But this filter doesn't seem to do anything.  So instead, we
+    # just pull all open PRs and filter them ourselves.
+    #
+    # TODO: If this is slow, we can kick it off asynchronously, before
+    # push_branches.
+    open_prs = collections.defaultdict(list)
+    for pr in repo.get_pulls(state="open"):
+        open_prs[pr.head.ref].append(pr)
+
+    # Check that every branch has zero or one open PRs.  Otherwise, the
+    # situation is ambiguous and we bail.
+    for branch, _ in grouped_commits_to_push():
+        branch_prs = open_prs[branch]
+        if len(branch_prs) <= 1:
+            continue
+        joined_pr_urls = "\n".join("  - " + pr.html_url for pr in branch_prs)
+        fatal(
+            textwrap.dedent(
+                f"""\
+                Branch {branch} has multiple open PRs:
+                {joined_pr_urls}
+                Don't know which to choose!"""
             )
+        )
+
+    def base_for(idx) -> str:
+        if idx == 0:
+            return git_upstream_branch().split("/")[-1]
+        base, _ = grouped_commits_to_push()[idx - 1]
+        return base
+
+    # Create new PRs if necessary.
+    for idx, (branch, cs) in enumerate(grouped_commits_to_push()):
+        branch_prs = open_prs[branch]
+        if branch_prs:
+            continue
+
+        base = base_for(idx)
+        print(f"Creating PR for {branch}, base {base}...")
+        # TODO: Open an editor for title and body?  (Do both at once.)
+        if not DRY_RUN:
+            branch_prs.append(
+                repo.create_pull(title=branch, base=base, head=branch, body="")
+            )
+            # TODO: Auto-open this URL.
+            print(f"Created {pr.html_url}")
+
+    # Update PRs for each branch.
+    for idx, (branch, cs) in enumerate(grouped_commits_to_push()):
+        branch_prs = open_prs[branch]
+        if len(branch_prs) != 1:
+            fatal(
+                f"Expected one open PR for {branch}, but was {len(branch_prs)}."
+                "This should not happen here!"
+            )
+
+        pr = branch_prs[0]
+
+        base = base_for(idx)
+        if pr.base.ref != base:
+            print(
+                f"Updating base branch for {branch} (PR #{pr.number}) "
+                f"from {pr.base.ref} to {base}"
+            )
+
+        # Update <git-pr-chain> portion of description if necessary.
+        body = pr.body
+        if "<git-pr-chain>" not in body:
+            body = body + "\n\n" + "<git-pr-chain></git-pr-chain>"
+
+        body = re.sub(
+            r"\s*<git-pr-chain>.*</git-pr-chain>",
+            chain_desc_for(branch, cs, open_prs),
+            body,
+            flags=re.DOTALL,
+        )
+
+        if not DRY_RUN and (base != pr.base.ref or body != pr.body):
+            pr.edit(base=base, body=body)
 
 
 def cmd_upload(args):
