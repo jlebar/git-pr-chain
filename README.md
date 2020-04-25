@@ -117,4 +117,5 @@ You can; the tool only requires that your *local* history has no merges.
 ## Special thanks
 
 git-pr-chain is inspired by [git-pr-train](https://github.com/realyze/pr-train)
-and [git-chain](https://github.com/Shopify/git-chain).
+and [git-chain](https://github.com/Shopify/git-chain), and a tool written by
+@mina86.
