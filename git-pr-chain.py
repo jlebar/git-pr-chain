@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 
+"""
+Manages chains of GitHub pull requests.
+"""
+
 # Requires
-#  pip3 install pyyaml
-#  pip3 install PyGithub
+#  pip3 install pyyaml PyGithub
 
 import argparse
 import collections
