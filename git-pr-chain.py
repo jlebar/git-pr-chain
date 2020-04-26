@@ -190,7 +190,7 @@ class Commit:
             return True
 
         # Search the commit message for 'git-pr-chain: STOP' or 'GPC: STOP'.
-        return bool(re.search(r"(git-pr-chain|GPC):\s*STOP\>", self.commit_msg))
+        return bool(re.search(r"(git-pr-chain|GPC):\s*STOP\b", self.commit_msg))
 
     @cached_property
     @traced
@@ -237,15 +237,13 @@ def gh_branch_prefix():
 
 @functools.lru_cache()
 def grouped_commits() -> List[Tuple[Optional[str], List[Commit]]]:
-    return [
+    # We have to group and then filter in separate steps because `cs` is a
+    # one-time iterable, and both grouping and filtering needs to read it.
+    res = (
         (gh_branch_prefix() + branch if branch else None, list(cs))
         for branch, cs in itertools.groupby(branch_commits(), lambda c: c.gh_branch)
-    ]
-
-
-@functools.lru_cache()
-def grouped_commits_to_push() -> List[Tuple[str, List[Commit]]]:
-    return [(branch, cs) for branch, cs in grouped_commits() if branch]
+    )
+    return [(branch, cs) for branch, cs in res if branch and not cs[0].not_to_be_pushed]
 
 
 def validate_branch_commits(commits: Iterable[Commit]) -> None:
@@ -422,7 +420,7 @@ def chain_desc_for(
     open_prs: Dict[str, List[github.PullRequest.PullRequest]],
 ) -> str:
     chain = []
-    for branch, _ in grouped_commits_to_push():
+    for branch, _ in grouped_commits():
         pr = open_prs[branch][0]  # should only be one at this point.
         line = f"#{pr.number} {pr.title}"
         if pr.head.ref == gh_branch:
@@ -469,7 +467,7 @@ def create_and_update_prs(args):
 
     # Check that every branch has zero or one open PRs.  Otherwise, the
     # situation is ambiguous and we bail.
-    for branch, _ in grouped_commits_to_push():
+    for branch, _ in grouped_commits():
         branch_prs = open_prs[branch]
         if len(branch_prs) <= 1:
             continue
@@ -486,11 +484,11 @@ def create_and_update_prs(args):
     def base_for(idx) -> str:
         if idx == 0:
             return git_upstream_branch().split("/")[-1]
-        base, _ = grouped_commits_to_push()[idx - 1]
+        base, _ = grouped_commits()[idx - 1]
         return base
 
     # Create new PRs if necessary.
-    for idx, (branch, cs) in enumerate(grouped_commits_to_push()):
+    for idx, (branch, cs) in enumerate(grouped_commits()):
         branch_prs = open_prs[branch]
         if branch_prs:
             continue
@@ -501,18 +499,18 @@ def create_and_update_prs(args):
             # Eh, using the first commit's title as the title of the PR isn't
             # great, but maybe it's OK as a guess.  Or maybe TODO: open an
             # editor?
-            title = cs[0].commit_msg.split('\n')[0]
+            title = cs[0].commit_msg.split("\n")[0]
             pr = repo.create_pull(title=title, base=base, head=branch, body="")
             branch_prs.append(pr)
             # TODO: Auto-open this URL.
             print(f"Created {pr.html_url}")
 
     # Update PRs for each branch.
-    for idx, (branch, cs) in enumerate(grouped_commits_to_push()):
+    for idx, (branch, cs) in enumerate(grouped_commits()):
         branch_prs = open_prs[branch]
         if len(branch_prs) != 1:
             fatal(
-                f"Expected one open PR for {branch}, but was {len(branch_prs)}."
+                f"Expected one open PR for {branch}, but was {len(branch_prs)}. "
                 "This should not happen here!"
             )
 
@@ -530,17 +528,21 @@ def create_and_update_prs(args):
         if "<git-pr-chain>" not in body:
             body = body + "\n\n" + "<git-pr-chain></git-pr-chain>"
 
-        body = re.sub(
-            r"\s*<git-pr-chain>.*</git-pr-chain>",
-            chain_desc_for(branch, cs, open_prs),
-            body,
-            flags=re.DOTALL,
-        )
+        if not DRY_RUN:
+            # chain_desc_for doesn't work in dry runs, because we don't create
+            # PRs for it to reference.
+            body = re.sub(
+                r"\s*<git-pr-chain>.*</git-pr-chain>",
+                chain_desc_for(branch, cs, open_prs),
+                body,
+                flags=re.DOTALL,
+            )
 
-        if not DRY_RUN and (base != pr.base.ref or body != pr.body):
-            pr.edit(base=base, body=body)
+            if base != pr.base.ref or body != pr.body:
+                pr.edit(base=base, body=body)
 
 
+# TODO: Rename to "push"?  That matches git better...
 def cmd_upload(args):
     push_branches(args)
     create_and_update_prs(args)
