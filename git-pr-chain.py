@@ -497,9 +497,12 @@ def create_and_update_prs(args):
 
         base = base_for(idx)
         print(f"Creating PR for {branch}, base {base}...")
-        # TODO: Open an editor for title and body?  (Do both at once.)
         if not DRY_RUN:
-            pr = repo.create_pull(title=branch, base=base, head=branch, body="")
+            # Eh, using the first commit's title as the title of the PR isn't
+            # great, but maybe it's OK as a guess.  Or maybe TODO: open an
+            # editor?
+            title = cs[0].commit_msg.split('\n')[0]
+            pr = repo.create_pull(title=title, base=base, head=branch, body="")
             branch_prs.append(pr)
             # TODO: Auto-open this URL.
             print(f"Created {pr.html_url}")
