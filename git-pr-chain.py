@@ -7,6 +7,11 @@ Manages chains of GitHub pull requests.
 # Requires
 #  pip3 install pyyaml PyGithub
 
+# Check with
+#
+#  $ black
+#  $ pytype -d import-error
+
 import argparse
 import collections
 import concurrent.futures
@@ -494,9 +499,8 @@ def create_and_update_prs(args):
         print(f"Creating PR for {branch}, base {base}...")
         # TODO: Open an editor for title and body?  (Do both at once.)
         if not DRY_RUN:
-            branch_prs.append(
-                repo.create_pull(title=branch, base=base, head=branch, body="")
-            )
+            pr = repo.create_pull(title=branch, base=base, head=branch, body="")
+            branch_prs.append(pr)
             # TODO: Auto-open this URL.
             print(f"Created {pr.html_url}")
 
