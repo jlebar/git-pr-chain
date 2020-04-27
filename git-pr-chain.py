@@ -361,7 +361,7 @@ def branch_commits() -> List[Commit]:
     return commits
 
 
-def cmd_show(args):
+def cmd_log(args):
     commits = branch_commits()
     if not commits:
         fatal(
@@ -627,8 +627,8 @@ def main():
     parser.add_argument("-n", "--dry-run", action="store_true")
     subparser = parser.add_subparsers()
 
-    sp_show = subparser.add_parser("show", help="List commits in chain")
-    sp_show.set_defaults(func=cmd_show)
+    sp_log = subparser.add_parser("log", help="List commits in chain")
+    sp_log.set_defaults(func=cmd_log)
 
     sp_push = subparser.add_parser("push", help="Create and update PRs in github")
     sp_push.set_defaults(func=cmd_push)
@@ -649,8 +649,8 @@ def main():
     def cmd_help(args):
         if "command" not in args or not args.command:
             parser.print_help()
-        elif args.command == "show":
-            sp_show.print_help()
+        elif args.command == "log":
+            sp_log.print_help()
         elif args.command == "push":
             sp_push.print_help()
         elif args.command == "merge":
