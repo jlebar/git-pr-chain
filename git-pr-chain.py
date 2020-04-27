@@ -616,6 +616,10 @@ def cmd_merge(args):
         "".join(git_upstream_branch().split("/")[1:]),
     )
 
+    # Push to github again so everything's updated.
+    push_branches(args)
+    create_and_update_prs(args)
+
 
 def main():
     parser = argparse.ArgumentParser()
