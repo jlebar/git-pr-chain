@@ -26,13 +26,13 @@ you
 
 ```
 $ touch foo && git add foo
-$ git commit -a -m "Add foo\ngit-pr-chain: add-foo"
+$ git commit -m "Add foo\ngit-pr-chain: add-foo"
 
 $ echo "blah blah" > foo
 $ git commit -a -m "Update foo"
 
 $ touch bar && git add bar
-$ git commit -a "Add bar\ngit-pr-chain: add-bar"
+$ git commit -m "Add bar\ngit-pr-chain: add-bar"
 
 # We need to know what "upstream" is.
 $ git branch --set-upstream-to origin/master
