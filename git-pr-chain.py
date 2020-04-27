@@ -204,6 +204,13 @@ class Commit:
         shortmsg = git("show", "--no-patch", "--format=%s", self.sha)
         return f"{shortsha} {shortmsg}"
 
+    def print_shortdesc(self, prefix=""):
+        if prefix:
+            print(prefix, end="")
+            sys.stdout.flush()
+        # Call git log directly so we get nicely colorized output.
+        subprocess.run(("git", "--no-pager", "log", "-n1", "--oneline", self.sha))
+
     @cached_property
     @traced
     def commit_msg(self):
@@ -383,11 +390,7 @@ def cmd_show(args):
                     '(Add "git-pr-chain: <branch>" to commit msg.)'
                 )
         for c in cs:
-            # Indent two spaces, then call git log directly, so we get nicely
-            # colorized output.
-            print("  ", end="")
-            sys.stdout.flush()
-            subprocess.run(("git", "--no-pager", "log", "-n1", "--oneline", c.sha))
+            c.print_shortdesc(prefix="  ")
 
 
 def push_branches(args):
@@ -419,6 +422,9 @@ def chain_desc_for(
     cs: List[Commit],
     open_prs: Dict[str, List[github.PullRequest.PullRequest]],
 ) -> str:
+    # TODO: It would be nice to show merged PRs here too, rather than having
+    # them disappear.
+
     chain = []
     for branch, _ in grouped_commits():
         pr = open_prs[branch][0]  # should only be one at this point.
@@ -451,10 +457,8 @@ def chain_desc_for(
 """
 
 
-def create_and_update_prs(args):
-    commits = branch_commits()
-    repo = gh_repo_client()
-
+def get_open_prs() -> Dict[str, List[github.PullRequest.PullRequest]]:
+    """Open PRs indexed by HEAD branch."""
     # Nominally you can ask the GH API for all PRs whose head is a particular
     # branch.  But this filter doesn't seem to do anything.  So instead, we
     # just pull all open PRs and filter them ourselves.
@@ -462,8 +466,28 @@ def create_and_update_prs(args):
     # TODO: If this is slow, we can kick it off asynchronously, before
     # push_branches.
     open_prs = collections.defaultdict(list)
-    for pr in repo.get_pulls(state="open"):
+    for pr in gh_repo_client().get_pulls(state="open"):
         open_prs[pr.head.ref].append(pr)
+    return open_prs
+
+
+def fatal_multiple_prs_for_branch(
+    branch: str, prs: List[github.PullRequest.PullRequest]
+) -> None:
+    joined_pr_urls = "\n".join("  - " + pr.html_url for pr in prs)
+    fatal(
+        textwrap.dedent(
+            f"""\
+            Branch {branch} has multiple open PRs:
+            {joined_pr_urls}
+            Don't know which to choose!"""
+        )
+    )
+
+
+def create_and_update_prs(args):
+    repo = gh_repo_client()
+    open_prs = get_open_prs()
 
     # Check that every branch has zero or one open PRs.  Otherwise, the
     # situation is ambiguous and we bail.
@@ -471,19 +495,11 @@ def create_and_update_prs(args):
         branch_prs = open_prs[branch]
         if len(branch_prs) <= 1:
             continue
-        joined_pr_urls = "\n".join("  - " + pr.html_url for pr in branch_prs)
-        fatal(
-            textwrap.dedent(
-                f"""\
-                Branch {branch} has multiple open PRs:
-                {joined_pr_urls}
-                Don't know which to choose!"""
-            )
-        )
+        fatal_multiple_prs_for_branch(branch, branch_prs)
 
     def base_for(idx) -> str:
         if idx == 0:
-            return git_upstream_branch().split("/")[-1]
+            return "".join(git_upstream_branch().split("/")[1:])
         base, _ = grouped_commits()[idx - 1]
         return base
 
@@ -542,10 +558,63 @@ def create_and_update_prs(args):
                 pr.edit(base=base, body=body)
 
 
-# TODO: Rename to "push"?  That matches git better...
-def cmd_upload(args):
+def cmd_push(args):
     push_branches(args)
     create_and_update_prs(args)
+
+
+def cmd_merge(args):
+    push_branches(args)
+
+    # create_and_update_prs() is important; it's what's responsible for
+    # updating base branches.  Without this, we might merge into the previous
+    # feature branch rather than master!
+    create_and_update_prs(args)
+
+    try:
+        branch, cs = grouped_commits()[0]
+    except IndexError:
+        fatal("No commits to push!")
+
+    prs = get_open_prs()[branch]
+    if not prs:
+        fatal(f"No open PR for branch {branch}")
+    if len(prs) > 1:
+        fatal_multiple_prs_for_branch(branch, prs)
+    pr = prs[0]
+
+    print(f"Will merge PR {pr.number} with method {args.merge_method}")
+    for c in cs:
+        c.print_shortdesc(prefix="  ")
+
+    if DRY_RUN:
+        print("DRY RUN: Not merging.")
+        return
+
+    if args.yes:
+        yorn = "y"
+    else:
+        yorn = input("Continue [yN]? ")
+
+    if yorn.lower() != "y" and yorn.lower() != "yes":
+        return
+
+    res = pr.merge(merge_method=args.merge_method)
+    if not res.merged:
+        print(f"Failed: {res.message}")
+        return
+
+    print("Merged!")
+    if args.no_pull:
+        return
+
+    print("Pulling merged changes...")
+    git(
+        "pull",
+        "--rebase",
+        git_upstream_remote(),
+        "".join(git_upstream_branch().split("/")[1:]),
+    )
 
 
 def main():
@@ -557,16 +626,31 @@ def main():
     sp_show = subparser.add_parser("show", help="List commits in chain")
     sp_show.set_defaults(func=cmd_show)
 
-    sp_upload = subparser.add_parser("upload", help="Create and update PRs in github")
-    sp_upload.set_defaults(func=cmd_upload)
+    sp_push = subparser.add_parser("push", help="Create and update PRs in github")
+    sp_push.set_defaults(func=cmd_push)
+
+    sp_merge = subparser.add_parser(
+        "merge", help="Merge one (default) or more PRs (not yet implemented)"
+    )
+    sp_merge.add_argument(
+        "--merge_method",
+        type=str,
+        default="merge",
+        choices=["merge", "squash", "rebase"],
+    )
+    sp_merge.add_argument("--yes", "-y", action="store_true")
+    sp_merge.add_argument("--no-pull", help="Don't git pull after a successful merge.")
+    sp_merge.set_defaults(func=cmd_merge)
 
     def cmd_help(args):
         if "command" not in args or not args.command:
             parser.print_help()
         elif args.command == "show":
             sp_show.print_help()
-        elif args.command == "upload":
-            sp_upload.print_help()
+        elif args.command == "push":
+            sp_push.print_help()
+        elif args.command == "merge":
+            sp_merge.print_help()
         elif args.command == "help":
             print("Well aren't you trying to be clever.", file=sys.stderr)
         else:

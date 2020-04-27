@@ -46,10 +46,13 @@ Github branch add-foo
 Github branch add-bar
   be6db17 (HEAD -> test) Add bar
 
-$ git-pr-chain upload
+$ git-pr-chain push
 # Creates two PRs
 #  - one for the two commits in add-foo, and
 #  - one for add-bar
+
+$ git-pr-chain merge --merge-method=rebase
+# Merges "add-foo" (equivalent of clicking "merge" button on github)
 ```
 
 ## Usage notes
