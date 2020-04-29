@@ -616,9 +616,10 @@ def cmd_merge(args):
         "".join(git_upstream_branch().split("/")[1:]),
     )
 
-    # Push to github again so everything's updated.
-    push_branches(args)
-    create_and_update_prs(args)
+    # TODO: Push to github again so everything's updated.  Sadly can't just
+    # call push_branches() and create_and_update_prs() because those rely on my
+    # evil global caches, which are now out of date because we've merged our
+    # PR!
 
 
 def main():
