@@ -239,7 +239,11 @@ def git_upstream_remote(branch=None):
 @functools.lru_cache()
 @traced
 def gh_branch_prefix():
-    return git("config", "pr-chain.branch-prefix").strip()
+    try:
+        return git("config", "pr-chain.branch-prefix").strip()
+    except CalledProcessError:
+        # git config exits with an error code if the config key is not found.
+        return ''
 
 
 @functools.lru_cache()
