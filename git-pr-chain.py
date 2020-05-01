@@ -489,6 +489,25 @@ def fatal_multiple_prs_for_branch(
     )
 
 
+def set_pr_bases_to_master(args):
+    repo = gh_repo_client()
+    open_prs = get_open_prs()
+
+    for branch, _ in grouped_commits():
+        branch_prs = open_prs[branch]
+        if len(branch_prs) > 1:
+            fatal_multiple_prs_for_branch(branch, branch_prs)
+
+    upstream_master = "".join(git_upstream_branch().split("/")[1:])
+    for branch, _ in grouped_commits():
+        if not open_prs.get(branch):
+            continue
+        pr = open_prs[branch][0]
+
+        if not DRY_RUN:
+            pr.edit(base=upstream_master)
+
+
 def create_and_update_prs(args):
     repo = gh_repo_client()
     open_prs = get_open_prs()
@@ -497,9 +516,8 @@ def create_and_update_prs(args):
     # situation is ambiguous and we bail.
     for branch, _ in grouped_commits():
         branch_prs = open_prs[branch]
-        if len(branch_prs) <= 1:
-            continue
-        fatal_multiple_prs_for_branch(branch, branch_prs)
+        if len(branch_prs) > 1:
+            fatal_multiple_prs_for_branch(branch, branch_prs)
 
     def base_for(idx) -> str:
         if idx == 0:
@@ -563,11 +581,20 @@ def create_and_update_prs(args):
 
 
 def cmd_push(args):
+    # If the user reordered PRs in their local tree, force-pushing those
+    # commits can cause github to close the relevant PRs as "no commits here".
+    # That's quite bad!  Easiest way I can see to avoid this is, set all PRs'
+    # bases to `master`, then push, then fix the bases.
+    set_pr_bases_to_master(args)
     push_branches(args)
     create_and_update_prs(args)
 
 
 def cmd_merge(args):
+    # Like in cmd_push, we set every PR's base branch to master, otherwise
+    # push_branches() can cause github to close PRs incorrectly when we simply
+    # want to be reordering them.
+    set_pr_bases_to_master(args)
     push_branches(args)
 
     # create_and_update_prs() is important; it's what's responsible for
