@@ -243,7 +243,7 @@ def gh_branch_prefix():
         return git("config", "pr-chain.branch-prefix").strip()
     except CalledProcessError:
         # git config exits with an error code if the config key is not found.
-        return ''
+        return ""
 
 
 @functools.lru_cache()
@@ -356,9 +356,11 @@ def branch_commits() -> List[Commit]:
     # Infer upstream branch names on commits that don't have one explicitly in
     # the commit message
     for idx, c in enumerate(commits):
-        if idx == 0:
+        if c.gh_branch:
             continue
-        if not c.gh_branch:
+        if idx == 0:
+            fatal(f"First commit ({c.sha}) must have a 'git-pr-chain:' annotation!")
+        else:
             c.inferred_upstream_branch = commits[idx - 1].gh_branch
 
     validate_branch_commits(commits)
