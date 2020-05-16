@@ -241,7 +241,7 @@ def git_upstream_remote(branch=None):
 def gh_branch_prefix():
     try:
         return git("config", "pr-chain.branch-prefix").strip()
-    except CalledProcessError:
+    except subprocess.CalledProcessError:
         # git config exits with an error code if the config key is not found.
         return ""
 
