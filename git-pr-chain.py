@@ -227,7 +227,13 @@ def git_upstream_branch(branch=None):
     if not branch:
         branch = "HEAD"
     branchref = git("rev-parse", "--symbolic-full-name", branch)
-    return git("for-each-ref", "--format=%(upstream:short)", branchref)
+    upstream_branch = git("for-each-ref", "--format=%(upstream:short)", branchref)
+    if not upstream_branch:
+        fatal(
+            "Set an upstream branch with e.g. `git branch "
+            "--set-upstream-to origin/master`"
+        )
+    return upstream_branch
 
 
 def git_upstream_remote(branch=None):
@@ -336,11 +342,6 @@ def branch_commits() -> List[Commit]:
     is HEAD.
     """
     upstream_branch = git_upstream_branch()
-    if not upstream_branch:
-        fatal(
-            "Set an upstream branch with e.g. `git branch "
-            "--set-upstream-to origin/master`"
-        )
     commits = []
     for sha in (
         git("log", "--reverse", "--pretty=%H", f"{upstream_branch}..HEAD")
