@@ -111,7 +111,6 @@ You can; the tool only requires that your *local* history has no merges.
 
 ## TODOs
 
- - Add a `git-pr-chain submit` command to merge PRs.
  - Make this a proper Python package, and make an executable that doesn't end in
    `.py`.
  - Write tests.  I'm sure my code has no bugs.  :)
