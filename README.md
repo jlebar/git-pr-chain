@@ -20,7 +20,7 @@ you
  - add or remove commits,
  - rewrite history to modify a commit,
  - rewrite history to reorder PRs, or
- - submit a PR (and thus lose a PR in your chain).
+ - merge a PR (and thus lose a PR in your chain).
 
 ## Example
 
