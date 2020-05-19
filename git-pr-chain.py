@@ -493,6 +493,12 @@ def fatal_multiple_prs_for_branch(
 
 
 def set_pr_bases_to_master(args):
+    # Handles the possibility that PRs may be reordered.
+    #
+    # If any PR's base is "wrong", set the base branch of it and every PR
+    # afterwards to master.  This way when we `git push`, github won't close
+    # any of our PRs for containing zero commits.  We'll fix up the base
+    # branches in create_and_update_prs.
     repo = gh_repo_client()
     open_prs = get_open_prs()
 
@@ -502,13 +508,18 @@ def set_pr_bases_to_master(args):
             fatal_multiple_prs_for_branch(branch, branch_prs)
 
     upstream_master = "".join(git_upstream_branch().split("/")[1:])
+    prev_branch = upstream_master
     for branch, _ in grouped_commits():
         if not open_prs.get(branch):
             continue
         pr = open_prs[branch][0]
 
         if not DRY_RUN:
-            pr.edit(base=upstream_master)
+          if pr.base != prev_branch:
+              pr.edit(base=upstream_master)
+              prev_branch = upstream_master
+          else:
+              prev_branch = branch
 
 
 def create_and_update_prs(args):
@@ -586,8 +597,9 @@ def create_and_update_prs(args):
 def cmd_push(args):
     # If the user reordered PRs in their local tree, force-pushing those
     # commits can cause github to close the relevant PRs as "no commits here".
-    # That's quite bad!  Easiest way I can see to avoid this is, set all PRs'
-    # bases to `master`, then push, then fix the bases.
+    # That's quite bad!  Easiest way I can see to avoid this is, if one PR's
+    # base changes, set the base of that PR and all PRs after it to `master`.
+    # We'll then update the bases in create_and_update_prs.
     set_pr_bases_to_master(args)
     push_branches(args)
     create_and_update_prs(args)
