@@ -82,7 +82,10 @@ def gh_client():
         try:
             with open(os.path.join(config_dir, fname)) as f:
                 config = yaml.safe_load(f)
-                return config["github.com"][0]["oauth_token"]
+                if "hosts" in config:
+                    return config["hosts"]["github.com"]["oauth_token"]
+                if "github.com" in config:
+                    return config["github.com"][0]["oauth_token"]
         except (FileNotFoundError, KeyError, IndexError):
             return None
 
