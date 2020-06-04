@@ -94,6 +94,11 @@ $ git-pr-chain merge --merge-method=rebase
    let others know that this is your private branch. Consider setting it to your
    username.
 
+ * If you merge many PRs in quick succession, Travis/CircleCI won't be able to
+   keep up with the rapidly-changing branch bases and may send you many "build
+   failed" emails.  CircleCI's seems to be less noisy in this failure mode than
+   Travis; with Travis I once memorably got `O(n^2)` emails for a 20-PR chain.
+
  * `git-pr-chain` reads your github oauth token from
    [`gh`](https://github.com/cli/cli) or [`hub`](https://github.com/github/hub),
    because oauth is hard.  So you'll need to sign in to github with one of those
