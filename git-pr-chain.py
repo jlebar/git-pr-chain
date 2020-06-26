@@ -461,6 +461,14 @@ def chain_desc_for(
         for c in cs
     )
 
+    # Show a warning not to click the "merge" button for everything other than
+    # the first PR in the chain.
+    do_not_merge_msg = textwrap.dedent("""\
+    ⚠️⚠️ Please **do not click the green "merge" button** unless you know what
+    you're doing.  This PR is part of a chain of PRs, and clicking the merge
+    button will not merge it into master. ⚠️⚠️ """)
+    is_first_pr = gh_branch == grouped_commits()[0][0]
+
     return f"""\
 <git-pr-chain>
 
@@ -470,6 +478,7 @@ def chain_desc_for(
 #### [PR chain](https://github.com/jlebar/git-pr-chain)
 {chain_str}
 
+{do_not_merge_msg if not is_first_pr else ""}
 </git-pr-chain>
 """
 
