@@ -110,7 +110,7 @@ def gh_repo_client():
     # Translate our remote's URL into a github user/repo string.  (Is there
     # seriously not a beter way to do this?)
     remote_url = git("remote", "get-url", remote)
-    match = re.search(r"(?:[/:])([^/:]+/[^/:]+)\.git$", remote_url)
+    match = re.search(r"(?:[/:])([^/:]+/[^/:]+)(\.git)?$", remote_url)
     if not match:
         fatal(
             f"Couldn't extract github user/repo from {remote} "
