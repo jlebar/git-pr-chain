@@ -746,7 +746,7 @@ def cmd_new_pr(args):
     if head_commit.not_to_be_pushed:
         fatal(
             "There is a git-pr-chain: STOP commit upstream of this commit."
-            "  Please move it down before creating a git-pr-chain for it."
+            "  Please remove it before running `git-pr-chain new`."
         )
 
     maybe_pr_chain = head_commit.parse_pr_chain
