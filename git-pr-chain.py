@@ -354,10 +354,9 @@ def validate_branch_commits(commits: Iterable[Commit]) -> None:
             )
         )
 
-
 @traced
-def branch_commits() -> List[Commit]:
-    """Get the commits in this branch.
+def parse_commits_in_branch() -> List[Commit]:
+    """Parse the commits in this branch to internal Commit class
 
     The first commit is the one connected to the branch base.  The last commit
     is HEAD.
@@ -374,6 +373,16 @@ def branch_commits() -> List[Commit]:
             continue
         parent = commits[-1] if commits else None
         commits.append(Commit(sha, parent=parent))
+    return commits
+
+@traced
+def branch_commits() -> List[Commit]:
+    """Get and validate the commits in this branch.
+
+    The first commit is the one connected to the branch base.  The last commit
+    is HEAD.
+    """
+    commits = parse_commits_in_branch()
 
     # Infer upstream branch names on commits that don't have one explicitly in
     # the commit message
@@ -714,16 +723,45 @@ def cmd_merge(args):
 def cmd_new_pr(args):
     # Use this command to mark the top commit as a new PR in the chain. It will
     # generate the PR branch automatically
-    print(f"Should update top commit to be a new PR")
     # 1. Get current commit message and verify that it doesn't have git-pr-chain name on it
-    commits = branch_commits()
-    if not commits:
+    def generate_pr_chain_name(commit_title) -> str:
+        downcased = commit_title.lower()
+        # Change any non-words to _
+        only_word_char = re.sub(r"[^\w]", "_", downcased)
+        # Make _ compact: ____ -> _
+        truncate_continuous_underscore = re.sub(r"_+", "_", only_word_char)
+        # Strip _ away from the head and tail: ___xx_xx___ -> xx_xx
+        strip_start_end_underscore = re.sub(r"^_*|_*$", "", truncate_continuous_underscore)
+        # Only keep 40 characters
+        return strip_start_end_underscore[0:40]
+
+    commits = parse_commits_in_branch()
+    if not commits or (len(commits) == 0):
         fatal(
             "No commits in branch.  Is the upstream branch (git branch "
             "--set-upstream-to <origin/master or something> set correctly?"
         )
-    print(len(commits))
+
+    head_commit = commits[-1]
+    if head_commit.not_to_be_pushed:
+        fatal(
+            "There is a git-pr-chain: STOP commit upstream of this commit."
+            "  Please move it down before creating a git-pr-chain for it."
+        )
+
+    maybe_pr_chain = head_commit.parse_pr_chain
+    if maybe_pr_chain:
+        fatal(f"There is already a git-pr-chain for this commit: {maybe_pr_chain}")
+
     # 2. Create a name and update the commit message
+    print(f"Use {generate_pr_chain_name(head_commit.commit_msg)} as the brach name")
+    new_commit_msg = (
+        head_commit.commit_msg +
+        "\n\n" +
+        "git-pr-chain: " + generate_pr_chain_name(head_commit.commit_msg)
+    )
+    if not DRY_RUN:
+        git("commit", "--amend", f"-m{new_commit_msg}")
 
 def main():
     parser = argparse.ArgumentParser()
