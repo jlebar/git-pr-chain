@@ -166,17 +166,28 @@ class Commit:
 
     @cached_property
     @traced
-    def gh_branch(self):
+    def gh_branch(self) -> Optional[str]:
         """Branch that contains this commit in github."""
         if self.not_to_be_pushed:
             return None
 
+        pr_chain_name = self.parse_pr_chain
+
+        if pr_chain_name:
+            return pr_chain_name
+
+        return self.parent.gh_branch if self.parent else None
+
+    @cached_property
+    @traced
+    def parse_pr_chain(self) -> Optional[str]:
+        """Return pr chain if it exists in this PR, none otherwise."""
         # Search the commit message for 'git-pr-chain: XYZ' or 'GPC: XYZ'.
         matches = re.findall(
             r"^(?:git-pr-chain|GPC):\s*(.*)", self.commit_msg, re.MULTILINE
         )
         if not matches:
-            return self.parent.gh_branch if self.parent else None
+            return None
         if len(matches) == 1:
             # findall returns the groups directly, so matches[0] is group 1 of
             # the match -- which is what we want.
@@ -700,6 +711,19 @@ def cmd_merge(args):
     # evil global caches, which are now out of date because we've merged our
     # PR!
 
+def cmd_new_pr(args):
+    # Use this command to mark the top commit as a new PR in the chain. It will
+    # generate the PR branch automatically
+    print(f"Should update top commit to be a new PR")
+    # 1. Get current commit message and verify that it doesn't have git-pr-chain name on it
+    commits = branch_commits()
+    if not commits:
+        fatal(
+            "No commits in branch.  Is the upstream branch (git branch "
+            "--set-upstream-to <origin/master or something> set correctly?"
+        )
+    print(len(commits))
+    # 2. Create a name and update the commit message
 
 def main():
     parser = argparse.ArgumentParser()
@@ -709,6 +733,9 @@ def main():
 
     sp_log = subparser.add_parser("log", help="List commits in chain")
     sp_log.set_defaults(func=cmd_log)
+
+    sp_new = subparser.add_parser("new", help="Add a new PR to the chain")
+    sp_new.set_defaults(func=cmd_new_pr)
 
     sp_push = subparser.add_parser("push", help="Create and update PRs in github")
     sp_push.set_defaults(func=cmd_push)
