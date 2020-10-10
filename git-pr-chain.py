@@ -750,6 +750,21 @@ def cmd_new_pr(args):
     if not DRY_RUN:
         git("commit", "--amend", f"-m{new_commit_msg}")
 
+def cmd_end_chain(args):
+    # Use this command to create an empty commit that marks the end of the chain.
+    # Commits after this one will not be included in any PR when doing a push.
+    check_staged = git("diff", "--staged")
+
+    # Do not accidentally add changes to the chain end commit.
+    # It is easier for it to be empty and can be moved around in `git rebase`
+    if check_staged:
+        fatal("Please unstage all changes. Chain end commit should be empty")
+
+    chain_end_msg = "=== git-pr-chain: STOP ==="
+    print(f"Create empty commit to stop the chain: ", chain_end_msg)
+    if not DRY_RUN:
+        git("commit", "--allow-empty", "-m", chain_end_msg)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -761,6 +776,9 @@ def main():
 
     sp_new = subparser.add_parser("new", help="Mark HEAD as starting a new PR in the chain")
     sp_new.set_defaults(func=cmd_new_pr)
+
+    sp_end = subparser.add_parser("end-chain", help="Add a commit to mark the end of the chain")
+    sp_end.set_defaults(func=cmd_end_chain)
 
     sp_push = subparser.add_parser("push", help="Create and update PRs in github")
     sp_push.set_defaults(func=cmd_push)
