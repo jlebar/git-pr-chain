@@ -171,17 +171,17 @@ class Commit:
         if self.not_to_be_pushed:
             return None
 
-        pr_chain_name = self.parse_pr_chain
+        pr_chain_annotation = self.pr_chain_annotation
 
-        if pr_chain_name:
-            return pr_chain_name
+        if pr_chain_annotation:
+            return pr_chain_annotation
 
         return self.parent.gh_branch if self.parent else None
 
     @cached_property
     @traced
-    def parse_pr_chain(self) -> Optional[str]:
-        """Return pr chain if it exists in this PR, none otherwise."""
+    def pr_chain_annotation(self) -> Optional[str]:
+        """Return pr chain annotation if it exists in this PR, none otherwise."""
         # Search the commit message for 'git-pr-chain: XYZ' or 'GPC: XYZ'.
         matches = re.findall(
             r"^(?:git-pr-chain|GPC):\s*(.*)", self.commit_msg, re.MULTILINE
@@ -716,9 +716,11 @@ def cmd_merge(args):
     # PR!
 
 def cmd_new_pr(args):
-    # Use this command to mark the top commit as a new PR in the chain. It will
-    # generate the PR branch automatically
-    def generate_pr_chain_name(commit_title) -> str:
+    """
+    Use this command to mark the top commit as a new PR in the chain. It will
+    generate the PR branch automatically
+    """
+    def generate_pr_chain_annotation(commit_title) -> str:
         downcased = commit_title.lower()
         # Change any non-words to _
         only_word_char = re.sub(r"[^\w]", "_", downcased)
@@ -729,20 +731,21 @@ def cmd_new_pr(args):
         # Only keep 40 characters
         return strip_start_end_underscore[0:40]
 
-    # 1. Get current commit message and verify that it doesn't have git-pr-chain name on it
+    # 1. Get current commit message and verify that it doesn't have git-pr-chain annotation on it
     head_sha = git("rev-parse", "HEAD")
     head_commit = Commit(head_sha, None) # ignore parent because it's irrelevant
 
-    maybe_pr_chain = head_commit.parse_pr_chain
-    if maybe_pr_chain:
-        fatal(f"There is already a git-pr-chain for this commit: {maybe_pr_chain}")
+    existing_pr_chain_annotation = head_commit.pr_chain_annotation
+    if existing_pr_chain_annotation:
+        fatal(f"There is already a git-pr-chain annotation on this commit: {existing_pr_chain_annotation}")
 
-    # 2. Create a name and update the commit message
-    print(f"Use {generate_pr_chain_name(head_commit.commit_title)} as the brach name")
+    # 2. Create an annotation and update the commit message
+    pr_chain_annotation = generate_pr_chain_annotation(head_commit.commit_title)
+    print(f"Using {pr_chain_annotation} as the brach name")
     new_commit_msg = (
         head_commit.commit_msg +
         "\n\n" +
-        "git-pr-chain: " + generate_pr_chain_name(head_commit.commit_msg)
+        "git-pr-chain: " + pr_chain_annotation
     )
     if not DRY_RUN:
         git("commit", "--amend", f"-m{new_commit_msg}")
@@ -756,7 +759,7 @@ def main():
     sp_log = subparser.add_parser("log", help="List commits in chain")
     sp_log.set_defaults(func=cmd_log)
 
-    sp_new = subparser.add_parser("new", help="Add a new PR to the chain")
+    sp_new = subparser.add_parser("new", help="Mark HEAD as starting a new PR in the chain")
     sp_new.set_defaults(func=cmd_new_pr)
 
     sp_push = subparser.add_parser("push", help="Create and update PRs in github")
