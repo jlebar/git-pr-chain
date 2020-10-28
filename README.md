@@ -3,12 +3,12 @@
 `git-pr-chain` is an opinionated tool that manages dependent GitHub pull
 requests.
 
-Use `git-pr-chain` you will be able to:
+Using `git-pr-chain` you will be able to:
 
-- ✅ Create multiple Github PRs with 1 local git branch (each with one or more commits)
-- ✅ Show the list of depedent PRs on the PR summary automatically
-- ✅ Rebase all PRs on top of the latest changes with 1 command
-- ✅ Update all PRs with one 1 command
+- ✅ Create multiple Github PRs with one local git branch (each with one or more commits)
+- ✅ Include the list of depedent PRs in the PR summary automatically
+- ✅ Rebase all PRs on top of the latest changes with one command
+- ✅ Update all PRs with one one command
 
 `git-pr-chain` works if you use a rebase/rewrite-history workflow locally, i.e.
 when you want to get new changes from upstream, you rebase onto the new master
@@ -33,15 +33,15 @@ you
 
 ```
 $ touch foo && git add foo
-$ git commit -m "Add foo\ngit-pr-chain: add-foo"
+$ git commit -m "Add foo"
+$ git-pr-chain new
 
 $ echo "blah blah" > foo
 $ git commit -a -m "Update foo"
 
-# We can also run `git-pr-chain new` to add PR-chain annotation automatically
+# You can also add the git-pr-chain annotation to the commit message yourself
 $ touch bar && git add bar
-$ git commit -m "Add bar"
-$ git-pr-chain new
+$ git commit -m "Add bar\ngit-pr-chain: add-bar"
 
 # We need to know what "upstream" is.
 $ git branch --set-upstream-to origin/master
@@ -87,7 +87,7 @@ Run `git-pr-chain` to see available commands. Currently, the following commands 
 ```
     log                 List commits in chain
     new                 Mark HEAD as starting a new PR in the chain
-    end-chain           Add a commit to mark the end of the chain
+    end-chain           Add a commit to mark the end of the chain. No commits beyond this point will be uploaded to github.
     push                Create and update PRs in github
     merge               Merge one (default) or more PRs (not yet implemented)
 ```
