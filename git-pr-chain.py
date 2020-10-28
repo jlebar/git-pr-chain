@@ -27,6 +27,8 @@ import subprocess
 import sys
 import textwrap
 import yaml
+import random
+import string
 from typing import List, Dict, Tuple, Iterable, Optional
 
 # Not compatible with pytype; ignore using instructions from
@@ -728,8 +730,9 @@ def cmd_new_pr(args):
         truncate_continuous_underscore = re.sub(r"_+", "_", only_word_char)
         # Strip _ away from the head and tail: ___xx_xx___ -> xx_xx
         strip_start_end_underscore = re.sub(r"^_*|_*$", "", truncate_continuous_underscore)
-        # Only keep 40 characters
-        return strip_start_end_underscore[0:40]
+        # Only keep 40 characters, padding 4 random hex characters at the end
+        random_padding = "".join(random.choice(string.hexdigits) for n in range(4))
+        return f"{strip_start_end_underscore[0:40]}_{random_padding.lower()}"
 
     # 1. Get current commit message and verify that it doesn't have git-pr-chain annotation on it
     head_sha = git("rev-parse", "HEAD")
