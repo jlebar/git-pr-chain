@@ -780,7 +780,7 @@ def main():
     sp_new = subparser.add_parser("new", help="Mark HEAD as starting a new PR in the chain")
     sp_new.set_defaults(func=cmd_new_pr)
 
-    sp_end = subparser.add_parser("end-chain", help="Add a commit to mark the end of the chain")
+    sp_end = subparser.add_parser("end-chain", help="Add a commit to mark the end of the chain. No commits beyond this point will be uploaded to github.")
     sp_end.set_defaults(func=cmd_end_chain)
 
     sp_push = subparser.add_parser("push", help="Create and update PRs in github")
