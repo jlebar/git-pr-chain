@@ -361,6 +361,7 @@ def validate_branch_commits(commits: Iterable[Commit]) -> None:
             )
         )
 
+
 @traced
 def branch_commits() -> List[Commit]:
     """Get and validate the commits in this branch.
@@ -480,10 +481,12 @@ def chain_desc_for(
 
     # Show a warning not to click the "merge" button for everything other than
     # the first PR in the chain.
-    do_not_merge_msg = textwrap.dedent("""\
+    do_not_merge_msg = textwrap.dedent(
+        """\
     ⚠️⚠️ Please **do not click the green "merge" button** unless you know what
     you're doing.  This PR is part of a chain of PRs, and clicking the merge
-    button will not merge it into master. ⚠️⚠️ """)
+    button will not merge it into master. ⚠️⚠️ """
+    )
     is_first_pr = gh_branch == grouped_commits()[0][0]
 
     return f"""\
@@ -717,11 +720,13 @@ def cmd_merge(args):
     # evil global caches, which are now out of date because we've merged our
     # PR!
 
+
 def cmd_new_pr(args):
     """
     Use this command to mark the top commit as a new PR in the chain. It will
     generate the PR branch automatically
     """
+
     def generate_pr_chain_annotation(commit_title) -> str:
         downcased = commit_title.lower()
         # Change any non-words to _
@@ -729,29 +734,32 @@ def cmd_new_pr(args):
         # Make _ compact: ____ -> _
         truncate_continuous_underscore = re.sub(r"_+", "_", only_word_char)
         # Strip _ away from the head and tail: ___xx_xx___ -> xx_xx
-        strip_start_end_underscore = re.sub(r"^_*|_*$", "", truncate_continuous_underscore)
+        strip_start_end_underscore = re.sub(
+            r"^_*|_*$", "", truncate_continuous_underscore
+        )
         # Only keep 40 characters, padding 4 random hex characters at the end
         random_padding = "".join(random.choice(string.hexdigits) for n in range(4))
         return f"{strip_start_end_underscore[0:40]}_{random_padding.lower()}"
 
     # 1. Get current commit message and verify that it doesn't have git-pr-chain annotation on it
     head_sha = git("rev-parse", "HEAD")
-    head_commit = Commit(head_sha, None) # ignore parent because it's irrelevant
+    head_commit = Commit(head_sha, None)  # ignore parent because it's irrelevant
 
     existing_pr_chain_annotation = head_commit.pr_chain_annotation
     if existing_pr_chain_annotation:
-        fatal(f"There is already a git-pr-chain annotation on this commit: {existing_pr_chain_annotation}")
+        fatal(
+            f"There is already a git-pr-chain annotation on this commit: {existing_pr_chain_annotation}"
+        )
 
     # 2. Create an annotation and update the commit message
     pr_chain_annotation = generate_pr_chain_annotation(head_commit.commit_title)
     print(f"Using {pr_chain_annotation} as the brach name")
     new_commit_msg = (
-        head_commit.commit_msg +
-        "\n\n" +
-        "git-pr-chain: " + pr_chain_annotation
+        head_commit.commit_msg + "\n\n" + "git-pr-chain: " + pr_chain_annotation
     )
     if not DRY_RUN:
         git("commit", "--amend", f"-m{new_commit_msg}")
+
 
 def cmd_end_chain(args):
     # Use this command to create an empty commit that marks the end of the chain.
@@ -768,6 +776,7 @@ def cmd_end_chain(args):
     if not DRY_RUN:
         git("commit", "--allow-empty", "-m", chain_end_msg)
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -777,10 +786,15 @@ def main():
     sp_log = subparser.add_parser("log", help="List commits in chain")
     sp_log.set_defaults(func=cmd_log)
 
-    sp_new = subparser.add_parser("new", help="Mark HEAD as starting a new PR in the chain")
+    sp_new = subparser.add_parser(
+        "new", help="Mark HEAD as starting a new PR in the chain"
+    )
     sp_new.set_defaults(func=cmd_new_pr)
 
-    sp_end = subparser.add_parser("end-chain", help="Add a commit to mark the end of the chain. No commits beyond this point will be uploaded to github.")
+    sp_end = subparser.add_parser(
+        "end-chain",
+        help="Add a commit to mark the end of the chain. No commits beyond this point will be uploaded to github.",
+    )
     sp_end.set_defaults(func=cmd_end_chain)
 
     sp_push = subparser.add_parser("push", help="Create and update PRs in github")
