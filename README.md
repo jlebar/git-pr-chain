@@ -77,6 +77,9 @@ this yourself.
 $ pip install pyyaml pygithub
 ```
 
+Note that it's `pygithub` and not `github`.  That's a different package that
+doesn't work. :)
+
 ### Grant Github access via `gh`
    `git-pr-chain` reads your github oauth token from
    [`gh`](https://github.com/cli/cli), because oauth is hard.  So you'll need to
