@@ -74,33 +74,7 @@ def traced(fn, show_start=False, show_end=True):
 
 @functools.lru_cache()
 def gh_client():
-    # Try to get the github oauth token out of gh or hub's config file.  Yes, I
-    # am that evil.
-    config_dir = os.environ.get(
-        "XDG_CONFIG_HOME", os.path.join(os.environ["HOME"], ".config")
-    )
-
-    def get_token_from(fname):
-        try:
-            with open(os.path.join(config_dir, fname)) as f:
-                config = yaml.safe_load(f)
-                if "hosts" in config:
-                    return config["hosts"]["github.com"]["oauth_token"]
-                if "github.com" in config:
-                    return config["github.com"][0]["oauth_token"]
-        except (FileNotFoundError, KeyError, IndexError):
-            return None
-
-    token = None
-    for fname in ["gh/config.yml", "hub"]:
-        token = get_token_from(fname)
-        if token:
-            break
-    if not token:
-        fatal(
-            "Couldn't get oauth token from gh or hub.  Install one of those "
-            "tools and authenticate to github."
-        )
+    token = subprocess.check_output(["gh", "auth", "token"]).decode('UTF-8').strip()
     return github.Github(token)
 
 
@@ -463,7 +437,7 @@ def chain_desc_for(
     chain = []
     for branch, _ in grouped_commits():
         pr = open_prs[branch][0]  # should only be one at this point.
-        line = f"#{pr.number} {pr.title}"
+        line = f"#{pr.number}"
         if pr.head.ref == gh_branch:
             line = f"👉 {line} 👈 **YOU ARE HERE**"
         chain.append(f"1. {line}")
@@ -630,6 +604,8 @@ def create_and_update_prs(args):
 
         # Update <git-pr-chain> portion of description if necessary.
         body = pr.body
+        if not body:
+            body = ""
         if "<git-pr-chain>" not in body:
             body = body + "\n\n" + "<git-pr-chain></git-pr-chain>"
 

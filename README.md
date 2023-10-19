@@ -66,11 +66,21 @@ $ git-pr-chain merge --merge-method=rebase
 
 ## Setting up
 
-### Grant Github access via `gh` or `hub`
+Follow these steps before using git-pr-chain.
+
+### Install prerequisites
+
+Sorry, I haven't bothered to learn how to do Python packaging, so you have to do
+this yourself.
+
+```
+$ pip install pyyaml pygithub
+```
+
+### Grant Github access via `gh`
    `git-pr-chain` reads your github oauth token from
-   [`gh`](https://github.com/cli/cli) or [`hub`](https://github.com/github/hub),
-   because oauth is hard.  So you'll need to sign in to github with one of those
-   tools.
+   [`gh`](https://github.com/cli/cli), because oauth is hard.  So you'll need to
+   sign in to github with that tool.
 
 ### Setting up `git-pr-chain` as an executable
 
