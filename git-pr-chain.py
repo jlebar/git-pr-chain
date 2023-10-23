@@ -29,6 +29,7 @@ import textwrap
 import yaml
 import random
 import string
+import tempfile
 from typing import List, Dict, Tuple, Iterable, Optional
 
 # Not compatible with pytype; ignore using instructions from
@@ -114,13 +115,13 @@ class cached_property:
 
 
 @traced
-def git(*args, err_ok=False, stderr_to_stdout=False):
+def git(*args, err_ok=False, stderr_to_stdout=False, input=None, env=None):
     """Runs a git command, returning the output."""
     stderr = subprocess.DEVNULL if err_ok else None
     stderr = subprocess.STDOUT if stderr_to_stdout else stderr
     try:
         return (
-            subprocess.check_output(["git"] + list(args), stderr=stderr)
+            subprocess.check_output(["git"] + list(args), stderr=stderr, input=input, env=env)
             .decode("utf-8")
             .strip()
         )
@@ -425,6 +426,8 @@ def push_branches(args):
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
         executor.map(push, grouped_commits())
 
+def strip_gpc_annotation(commit_msg):
+    return re.sub(r"^\s*(git-pr-chain|GPC):.*", "", commit_msg, flags=re.MULTILINE)
 
 def chain_desc_for(
     gh_branch: str,
@@ -443,15 +446,13 @@ def chain_desc_for(
         chain.append(f"1. {line}")
     chain_str = "\n".join(chain)
 
-    commits_str = "\n".join(
-        "1. "
-        + (
-            re.sub(r"^\s*(git-pr-chain|GPC):.*", "", c.commit_msg, flags=re.MULTILINE)
-            .replace("\n", "\n    ")
-            .strip()
+    if len(cs) == 1:
+        commits_str = strip_gpc_annotation(cs[0].commit_msg)
+    else:
+        commits_str = "\n".join(
+            "1. " + strip_gpc_annotation(c.commit_msg) .replace("\n", "\n    ") .strip()
+            for c in cs
         )
-        for c in cs
-    )
 
     # Show a warning not to click the "merge" button for everything other than
     # the first PR in the chain.
@@ -466,7 +467,7 @@ def chain_desc_for(
     return f"""\
 <git-pr-chain>
 
-#### Commits in this PR
+{"#### Commits in this PR" if len(cs) > 1 else ""}
 {commits_str}
 
 #### [PR chain](https://github.com/jlebar/git-pr-chain)
@@ -674,7 +675,24 @@ def cmd_merge(args):
     if yorn.lower() != "y" and yorn.lower() != "yes":
         return
 
-    res = pr.merge(merge_method=args.merge_method)
+    # When squash-merging, github uses the *PR*'s description as the default git
+    # commit message.  We don't want this, because git-pr-chain puts a bunch of
+    # extra info in the PR description.
+    commit_msg = github.GithubObject.NotSet
+    commit_title = github.GithubObject.NotSet
+    if args.merge_method == "squash":
+        if len(cs) == 1:
+            lines = strip_gpc_annotation(cs[0].commit_msg).split('\n')
+            commit_title = lines[0] + f" (#{pr.number})"
+            commit_msg = '\n'.join(lines[1:]).strip()
+        else:
+            commit_msg = "\n\n".join(
+                f"{idx + 1}. " + strip_gpc_annotation(c.commit_msg) .replace("\n", "\n    ") .strip()
+                for idx, c in enumerate(cs)
+            )
+
+    res = pr.merge(commit_title=commit_title, commit_message=commit_msg,
+                   merge_method=args.merge_method)
     if not res.merged:
         print(f"Failed: {res.message}")
         return
@@ -683,13 +701,11 @@ def cmd_merge(args):
     if args.no_pull:
         return
 
-    print("Pulling merged changes...")
-    git(
-        "pull",
-        "--rebase",
-        git_upstream_remote(),
-        "".join(git_upstream_branch().split("/")[1:]),
-    )
+    print("Fetching merged changes...")
+    git("fetch", git_upstream_remote())
+
+    print("Rebasing onto upstream.")
+    git("rebase", "--onto", git_upstream_branch(), cs[-1].sha)
 
     # TODO: Push to github again so everything's updated.  Sadly can't just
     # call push_branches() and create_and_update_prs() because those rely on my
