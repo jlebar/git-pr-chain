@@ -80,7 +80,7 @@ def traced(fn, show_start=False, show_end=True):
 
 @functools.lru_cache()
 def gh_client():
-    token = subprocess.check_output(["gh", "auth", "token"]).decode('UTF-8').strip()
+    token = subprocess.check_output(["gh", "auth", "token"]).decode("UTF-8").strip()
     return github.Github(token)
 
 
@@ -95,8 +95,7 @@ def gh_repo_client():
     match = re.search(r"(?:[/:])([^/:]+/[^/:]+?)(\.git)?$", remote_url)
     if not match:
         fatal(
-            f"Couldn't extract github user/repo from {remote} "
-            f"remote URL {remote_url}."
+            f"Couldn't extract github user/repo from {remote} remote URL {remote_url}."
         )
     gh_repo_name = match.group(1)
     return gh_client().get_repo(gh_repo_name)
@@ -126,7 +125,9 @@ def git(*args, err_ok=False, stderr_to_stdout=False, input=None, env=None):
     stderr = subprocess.STDOUT if stderr_to_stdout else stderr
     try:
         return (
-            subprocess.check_output(["git"] + list(args), stderr=stderr, input=input, env=env)
+            subprocess.check_output(
+                ["git"] + list(args), stderr=stderr, input=input, env=env
+            )
             .decode("utf-8")
             .strip()
         )
@@ -178,7 +179,7 @@ class Commit:
             f"Commit {self.sha} has multiple git-pr-chain lines.  Rewrite "
             "history and fix this."
         )
-        return None # unreachable
+        return None  # unreachable
 
     @cached_property
     @traced
@@ -430,8 +431,10 @@ def push_branches(args):
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
         executor.map(push, grouped_commits())
 
+
 def strip_gpc_annotation(commit_msg):
     return re.sub(r"^\s*(git-pr-chain|GPC):.*", "", commit_msg, flags=re.MULTILINE)
+
 
 def chain_desc_for(
     gh_branch: str,
@@ -455,7 +458,7 @@ def chain_desc_for(
         commits_str = strip_gpc_annotation(cs[0].commit_msg)
     else:
         commits_str = "\n".join(
-            "1. " + strip_gpc_annotation(c.commit_msg) .replace("\n", "\n    ") .strip()
+            "1. " + strip_gpc_annotation(c.commit_msg).replace("\n", "\n    ").strip()
             for c in cs
         )
 
@@ -687,17 +690,21 @@ def cmd_merge(args):
     commit_title = github.GithubObject.NotSet
     if args.merge_method == "squash":
         if len(cs) == 1:
-            lines = strip_gpc_annotation(cs[0].commit_msg).split('\n')
+            lines = strip_gpc_annotation(cs[0].commit_msg).split("\n")
             commit_title = lines[0] + f" (#{pr.number})"
-            commit_msg = '\n'.join(lines[1:]).strip()
+            commit_msg = "\n".join(lines[1:]).strip()
         else:
             commit_msg = "\n\n".join(
-                f"{idx + 1}. " + strip_gpc_annotation(c.commit_msg) .replace("\n", "\n    ") .strip()
+                f"{idx + 1}. "
+                + strip_gpc_annotation(c.commit_msg).replace("\n", "\n    ").strip()
                 for idx, c in enumerate(cs)
             )
 
-    res = pr.merge(commit_title=commit_title, commit_message=commit_msg,
-                   merge_method=args.merge_method)
+    res = pr.merge(
+        commit_title=commit_title,
+        commit_message=commit_msg,
+        merge_method=args.merge_method,
+    )
     if not res.merged:
         print(f"Failed: {res.message}")
         return
