@@ -1,11 +1,15 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "PyGithub",
+#     "pyyaml",
+# ]
+# ///
 
 """
 Manages chains of GitHub pull requests.
 """
-
-# Requires
-#  pip3 install pyyaml PyGithub
 
 # Check with
 #
@@ -31,6 +35,7 @@ import random
 import string
 import tempfile
 from typing import List, Dict, Tuple, Iterable, Optional
+from typing import NoReturn
 
 # Not compatible with pytype; ignore using instructions from
 # https://github.com/google/pytype/issues/80
@@ -173,6 +178,7 @@ class Commit:
             f"Commit {self.sha} has multiple git-pr-chain lines.  Rewrite "
             "history and fix this."
         )
+        return None # unreachable
 
     @cached_property
     @traced
@@ -345,7 +351,7 @@ def branch_commits() -> List[Commit]:
     is HEAD.
     """
     upstream_branch = git_upstream_branch()
-    commits = []
+    commits: List[Commit] = []
     for sha in (
         git("log", "--reverse", "--pretty=%H", f"{upstream_branch}..HEAD")
         .strip()
@@ -364,8 +370,6 @@ def branch_commits() -> List[Commit]:
             continue
         if idx == 0:
             fatal(f"First commit ({c.sha}) must have a 'git-pr-chain:' annotation!")
-        else:
-            c.inferred_upstream_branch = commits[idx - 1].gh_branch
 
     validate_branch_commits(commits)
     return commits
@@ -439,6 +443,7 @@ def chain_desc_for(
 
     chain = []
     for branch, _ in grouped_commits():
+        assert branch is not None
         pr = open_prs[branch][0]  # should only be one at this point.
         line = f"#{pr.number}"
         if pr.head.ref == gh_branch:
