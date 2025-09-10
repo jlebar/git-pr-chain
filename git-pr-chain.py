@@ -517,41 +517,31 @@ def fatal_multiple_prs_for_branch(
 def set_pr_bases_to_master(args):
     # Handles the possibility that PRs may be reordered.
     #
-    # Consider branches' current bases (e.g. A -> B -> C) and the bases in
-    # their PRs (e.g. A -> C -> B).  Consider this as one big graph and find
-    # cycles, here B -> C -> B.  All commits which participate in a cycle must
-    # have their base branch set to `master` before we can push branches to
-    # github.  This prevents github from closing PRs incorrectly.
-    #
-    # (I think this is a little aggressive, but I am still not sure exactly
-    # what the criterion should be.  In any case, it's perfectly safe to reset
-    # all commits' upstream to master; the only issue is noise in the PR log.)
-    repo = gh_repo_client()
+    # Check the order of the commits against the order of their PRs.  If any
+    # differences, reset the base of all the PRs to master.  This is overkill
+    # but safe: It's always safe to reset the base of a PR to master, it just
+    # results in noise in the PR log.
     open_prs = get_open_prs()
 
+    # Get the PR for each branch.
+    branch_prs = {}
     for branch, _ in grouped_commits():
-        branch_prs = open_prs[branch]
-        if len(branch_prs) > 1:
-            fatal_multiple_prs_for_branch(branch, branch_prs)
+        if prs := open_prs.get(branch):
+            branch_prs[branch] = prs[0]
+        else:
+            print("No open PR for branch", branch)
+            branch_prs[branch] = None
 
     upstream_master = "".join(git_upstream_branch().split("/")[1:])
-    seen_branches = []
-    branches_to_reset = set()
+    for (prev_branch, _), (branch, _) in zip(grouped_commits(), grouped_commits()[1:]):
+        prev_pr = branch_prs.get(prev_branch)
+        pr = branch_prs.get(branch)
+        if prev_pr and pr and pr.base.ref != prev_pr.head.ref:
+            break
+    else:
+        return
+
     for branch, _ in grouped_commits():
-        if not open_prs.get(branch):
-            continue
-        pr = open_prs[branch][0]
-        try:
-            idx = seen_branches.index(pr.base.ref)
-            if idx != len(seen_branches) - 1:
-                branches_to_reset.update(seen_branches[idx + 1 :])
-                branches_to_reset.add(branch)
-        except ValueError:
-            pass
-
-        seen_branches.append(branch)
-
-    for branch in branches_to_reset - {upstream_master}:
         print(f"Temporarily resetting base of {branch} to {upstream_master}.")
         pr = open_prs[branch][0]
         if not DRY_RUN:
